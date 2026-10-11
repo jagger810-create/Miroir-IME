@@ -1289,6 +1289,73 @@ class MiroirEngine {
         loadPage()
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // LA CONSTELLATION (11/10/2026) — la porte du graphe
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** La constellation d'une note — le premier vivant du graphe.
+     *  GET /api/constellation/:note_id?bloc_id= — le Cœur rend la projection
+     *  lisible : les nœuds du bloc, les voisins par embedding (avec leur
+     *  maison), trois familles d'arêtes (fil, temps, sens).
+     *  Même rythme que queryPageParnasse : thread, rang, uiHandler. */
+    fun fetchConstellation(noteId: String, onDone: (ConstellationData?) -> Unit) {
+        val blocId = parnasseBlockUuid ?: run { onDone(null); return }
+        val seq = ++requestSeq
+        val urlStr = "$coeurUrl/api/constellation/$noteId?bloc_id=$blocId"
+        Log.i(TAG, "❋ req[$seq] constellation → $urlStr")
+        Thread {
+            var data: ConstellationData? = null
+            try {
+                val conn = URL(urlStr).openConnection() as HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                if (conn.responseCode == 200) {
+                    val body = BufferedReader(InputStreamReader(conn.inputStream)).readText()
+                    data = parseConstellation(JSONObject(body))
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchConstellation: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            val d = data
+            uiHandler.post {
+                if (seq != requestSeq) {
+                    Log.w(TAG, "fetchConstellation: réponse périmée rang=$seq jetée")
+                    return@post
+                }
+                onDone(d)
+            }
+        }.start()
+    }
+
+    private fun parseConstellation(json: JSONObject): ConstellationData {
+        fun noeud(j: JSONObject) = ConstellationNoeud(
+            noteId = j.optString("note_id"),
+            title = j.optString("title"),
+            pageNumber = j.optInt("page_number", -1),
+            preview = j.optString("preview"),
+            blocId = j.optString("bloc_id"),
+            dansBloc = j.optBoolean("dans_bloc", true),
+        )
+        val arrNoeuds = json.optJSONArray("noeuds") ?: org.json.JSONArray()
+        val arrVoisins = json.optJSONArray("voisins") ?: org.json.JSONArray()
+        val arrAretes = json.optJSONArray("aretes") ?: org.json.JSONArray()
+        val centre = noeud(json.optJSONObject("centre") ?: org.json.JSONObject())
+        val noeuds = (0 until arrNoeuds.length()).map { noeud(arrNoeuds.getJSONObject(it)) }
+        val voisins = (0 until arrVoisins.length()).map { noeud(arrVoisins.getJSONObject(it)) }
+        val aretes = (0 until arrAretes.length()).map { i ->
+            val a = arrAretes.getJSONObject(i)
+            ConstellationArete(
+                type = a.optString("type"),
+                de = a.optString("de"),
+                vers = a.optString("vers"),
+                poids = a.optDouble("poids", 0.0),
+                sens = a.optString("sens"),
+            )
+        }
+        return ConstellationData(centre, noeuds, voisins, aretes)
+    }
+
     /** Navigation avec sauvegarde/chargement complets (standalone).
      *  Permissive : accepte tout index ≥ 0 et tout index négatif (carnet affillié).
      *  Le sens est unique : « va à la page N ». Le maître change selon le mode :
@@ -2332,4 +2399,30 @@ data class SerreLivres(
 data class SerreLivresData(
     val miroir: MutableList<SerreLivres> = mutableListOf(),
     val parnasse: MutableList<SerreLivres> = mutableListOf()
+)
+
+/** ═══ LA CONSTELLATION (11/10/2026) — la projection lisible du graphe ═══
+ *  GET /api/constellation/:note_id — le Cœur rend la forme, la fenêtre grave. */
+data class ConstellationNoeud(
+    val noteId: String,
+    val title: String,
+    val pageNumber: Int,
+    val preview: String = "",
+    val blocId: String = "",
+    val dansBloc: Boolean = true
+)
+
+data class ConstellationArete(
+    val type: String,   // fil | temps | sens
+    val de: String,
+    val vers: String,
+    val poids: Double,
+    val sens: String = ""  // fil : precedente | suivante
+)
+
+data class ConstellationData(
+    val centre: ConstellationNoeud,
+    val noeuds: List<ConstellationNoeud>,
+    val voisins: List<ConstellationNoeud>,
+    val aretes: List<ConstellationArete>
 )

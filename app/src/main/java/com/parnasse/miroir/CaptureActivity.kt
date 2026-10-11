@@ -51,6 +51,9 @@ class CaptureActivity : Activity() {
     private var recognizer: DigitalInkWrapper? = null
     private var captureView: CaptureSurfaceView? = null
     private var fontaineOverlay: FontaineOverlay? = null
+    // ═══ LA PORTE (11/10/2026) — le mode graphe : une fenêtre, pas un état ═══
+    private var constellationView: ConstellationView? = null
+    private var modeConstellation = false
     private var pageCounter: TextView? = null
     private var eyeButton: TextView? = null
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -426,11 +429,13 @@ class CaptureActivity : Activity() {
         // (le label de l'encadré ne serait pas resynchronisé, l'écran non gravé).
         val cocheBtn = makeToolBtn("\u2713", Color.argb(200, 0, 110, 40)) {
             if (captureView?.isCorrecting() == true) return@makeToolBtn
+            if (modeConstellation) return@makeToolBtn  // la coche écrit sur la page, pas sur le graphe
             engine.demanderCorrectionCoche()
             captureView?.invalidate()
         }
         cocheBtn.setOnLongClickListener {
             if (captureView?.isCorrecting() == true) return@setOnLongClickListener true
+            if (modeConstellation) return@setOnLongClickListener true
             engine.ratifierCoche()
             captureView?.invalidate()
             true
@@ -439,6 +444,7 @@ class CaptureActivity : Activity() {
 
         // ── ◄ Navigation gauche (carnet affillié : accepte pages négatives) ──
         toolbar.addView(makeToolBtn("\u25C0", Color.argb(200, 80, 80, 160)) {
+            if (modeConstellation) sortirConstellation()  // le graphe est une fenêtre
             engine.goToPageFull(engine.currentPageIndex - 1, navDelta = -1) {
                 updatePageCounter()
                 postMiroirState()
@@ -464,6 +470,7 @@ class CaptureActivity : Activity() {
 
         // ── ► Navigation droite (permissive : crée implicitement si page absente) ──
         toolbar.addView(makeToolBtn("\u25B6", Color.argb(200, 0, 80, 160)) {
+            if (modeConstellation) sortirConstellation()  // le graphe est une fenêtre
             engine.goToPageFull(engine.currentPageIndex + 1, navDelta = +1) {
                 updatePageCounter()
                 postMiroirState()
@@ -473,6 +480,11 @@ class CaptureActivity : Activity() {
             }
             returnToWriting()
             captureView?.invalidate()
+        })
+
+        // ── ✳ LA PORTE (11/10/2026) — le zoom arrière vers le graphe ──
+        toolbar.addView(makeToolBtn("\u2733", Color.argb(200, 30, 50, 110)) {
+            toggleConstellation()
         })
 
         // ── Bouton @ (MDM → Geppetto) ──
@@ -528,6 +540,17 @@ class CaptureActivity : Activity() {
                 FrameLayout.LayoutParams.MATCH_PARENT))
         }
 
+        // Couche 1bis : LA GRAVURE — le mode graphe (la porte, 11/10/2026).
+        // Au-dessus de la capture, sous la Fontaine : les taps traversent la
+        // surface (qui forwarde) et tombent sur la constellation.
+        constellationView = ConstellationView(this).also { cv ->
+            cv.visibility = View.GONE
+            cv.onNodeTap = { noeud -> openNoeud(noeud) }
+            captureFrame.addView(cv, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+
         // Couche 2 : SurfaceView FONTAINE — capture + rendu plume (Boox uniquement)
         if (FontaineOverlay.isAvailable()) {
             fontaineOverlay = FontaineOverlay(this, engine).also { fo ->
@@ -577,6 +600,75 @@ class CaptureActivity : Activity() {
             cv, com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
         cv.invalidate()
         fontaineOverlay?.activer()
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // LA PORTE (11/10/2026) — le mode graphe
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** ═══ LA PORTE — le zoom arrière vers le graphe ═══
+     *  Le graphe est une fenêtre : on y entre, on en sort par n'importe quelle
+     *  navigation. La fontaine se tait (pas d'écriture dans le graphe), la
+     *  gravure se pose d'un seul geste GC — jamais d'animation sur l'EPD. */
+    private fun toggleConstellation() {
+        val cv = constellationView ?: return
+        if (modeConstellation) {
+            sortirConstellation()
+            return
+        }
+        val blocId = engine.parnasseBlockUuid
+        val noteId = engine.parnasseNoteId
+        if (blocId == null || noteId == null) {
+            Toast.makeText(this, "La porte s'ouvre sur le Parnasse — amarrez d'abord le bloc", Toast.LENGTH_SHORT).show()
+            return
+        }
+        modeConstellation = true
+        fontaineOverlay?.desactiver()
+        captureView?.visibility = View.INVISIBLE
+        cv.visibility = View.VISIBLE
+        engine.fetchConstellation(noteId) { data ->
+            if (!modeConstellation) return@fetchConstellation
+            if (data == null) {
+                Toast.makeText(this@CaptureActivity, "La constellation est muette (Cœur ?)", Toast.LENGTH_SHORT).show()
+                sortirConstellation()
+                return@fetchConstellation
+            }
+            cv.setConstellation(data)
+            com.onyx.android.sdk.api.device.epd.EpdController.setViewDefaultUpdateMode(
+                cv, com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
+            cv.invalidate()
+        }
+    }
+
+    private fun sortirConstellation() {
+        if (!modeConstellation) return
+        modeConstellation = false
+        constellationView?.visibility = View.GONE
+        captureView?.visibility = View.VISIBLE
+        refreshAfterNav()
+    }
+
+    /** Tap sur un nœud du graphe : la page s'ouvre — la fenêtre reprend la main.
+     *  Un voisin hors du bloc = la fenêtre sur TOUT le Parnasse : le tiroir
+     *  change (le canal universel), la note est résolue par identité. */
+    private fun openNoeud(noeud: ConstellationNoeud) {
+        Log.i(TAG, "❋ porte → note ${noeud.noteId.take(8)} dansBloc=${noeud.dansBloc} bloc=${noeud.blocId.take(8)}")
+        if (!noeud.dansBloc && noeud.blocId.isNotEmpty()) {
+            engine.parnasseBlockUuid = noeud.blocId
+            engine.parnasseNoteId = noeud.noteId
+            val dirName = resolveMirrorBlockName(noeud.blocId) ?: noeud.blocId
+            engine.openBlockDir(this, dirName)
+            engine.initGroupManager(this)
+            amarrerBloc(noeud.blocId)
+        } else {
+            engine.parnasseNoteId = noeud.noteId
+        }
+        sortirConstellation()
+        engine.goToPageFull(0) {
+            updatePageCounter()
+            refreshAfterNav()
+        }
+        returnToWriting()
     }
 
     private fun showCloseMenu(anchor: View) {
