@@ -444,7 +444,7 @@ class CaptureActivity : Activity() {
 
         // ── ◄ Navigation gauche (carnet affillié : accepte pages négatives) ──
         toolbar.addView(makeToolBtn("\u25C0", Color.argb(200, 80, 80, 160)) {
-            if (modeConstellation) sortirConstellation()  // le graphe est une fenêtre
+            if (modeConstellation) sortirConstellation(avecRefresh = false)  // le graphe est une fenêtre
             engine.goToPageFull(engine.currentPageIndex - 1, navDelta = -1) {
                 updatePageCounter()
                 postMiroirState()
@@ -470,7 +470,7 @@ class CaptureActivity : Activity() {
 
         // ── ► Navigation droite (permissive : crée implicitement si page absente) ──
         toolbar.addView(makeToolBtn("\u25B6", Color.argb(200, 0, 80, 160)) {
-            if (modeConstellation) sortirConstellation()  // le graphe est une fenêtre
+            if (modeConstellation) sortirConstellation(avecRefresh = false)  // le graphe est une fenêtre
             engine.goToPageFull(engine.currentPageIndex + 1, navDelta = +1) {
                 updatePageCounter()
                 postMiroirState()
@@ -640,12 +640,15 @@ class CaptureActivity : Activity() {
         }
     }
 
-    private fun sortirConstellation() {
+    private fun sortirConstellation(avecRefresh: Boolean = true) {
         if (!modeConstellation) return
         modeConstellation = false
         constellationView?.visibility = View.GONE
         captureView?.visibility = View.VISIBLE
-        refreshAfterNav()
+        // Le lavage GC ne se fait que si personne d'autre ne va repeindre :
+        // une navigation qui suit (openNoeud, ◄ ►) lave dans son onSettled —
+        // sinon double GC et un flash de la vieille page.
+        if (avecRefresh) refreshAfterNav()
     }
 
     /** Tap sur un nœud du graphe : la page s'ouvre — la fenêtre reprend la main.
@@ -663,7 +666,7 @@ class CaptureActivity : Activity() {
         } else {
             engine.parnasseNoteId = noeud.noteId
         }
-        sortirConstellation()
+        sortirConstellation(avecRefresh = false)  // la nav lave dans son onSettled
         engine.goToPageFull(0) {
             updatePageCounter()
             refreshAfterNav()

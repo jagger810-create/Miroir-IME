@@ -73,6 +73,10 @@ class FontaineOverlay(context: Context, private val engine: MiroirEngine) : Surf
     /** Appelé à la fin du geste (stylet levé). */
     var onGestureEnd: (() -> Unit)? = null
     var modeInteraction: Boolean = false
+    /** ═══ LA PORTE (11/10/2026) — la fontaine inactive laisse passer les
+     *  touches vers ce qui vit dessous (la gravure). Posé par desactiver(),
+     *  levé par activer()/reactiver(). ═══ */
+    private var actif: Boolean = true
 
     /** Cible de forward des événements tactiles en mode interaction. */
     var touchForwardTarget: android.view.View? = null
@@ -430,6 +434,7 @@ class FontaineOverlay(context: Context, private val engine: MiroirEngine) : Surf
 
     /** Désactive le rendu → désactive raw drawing (sans fermer le canal) + efface la surface. */
     fun desactiver() {
+        actif = false
         try {
             touchHelper?.setRawDrawingEnabled(false)
         } catch (_: Exception) {}
@@ -452,6 +457,7 @@ class FontaineOverlay(context: Context, private val engine: MiroirEngine) : Surf
             th.setStrokeColor(strokeColor)
             th.setRawDrawingRenderEnabled(true)
             th.setRawDrawingEnabled(true)
+            actif = true
             Log.i(TAG, "Fontaine activée — OK")
         } catch (e: Exception) {
             Log.w(TAG, "activer() échoué: ${e.message}")
@@ -473,6 +479,7 @@ class FontaineOverlay(context: Context, private val engine: MiroirEngine) : Surf
             th.setStrokeColor(strokeColor)
             th.setRawDrawingRenderEnabled(true)
             th.setRawDrawingEnabled(true)
+            actif = true
             Log.i(TAG, "Fontaine réactivée — OK")
         } catch (e: Exception) {
             Log.w(TAG, "reactiver() échoué: ${e.message}")
@@ -559,6 +566,11 @@ class FontaineOverlay(context: Context, private val engine: MiroirEngine) : Surf
             touchForwardTarget?.dispatchTouchEvent(event)
             return true
         }
+        // ═══ LA PORTE (11/10/2026) — la fontaine inactive laisse passer les
+        // touches : la gravure (ConstellationView) vit dessous et reçoit.
+        // L'ordre des gardes compte : le forward d'interaction d'abord,
+        // la traversée ensuite. ═══
+        if (!actif) return false
         // En mode écriture, consommer pour éviter les taps parasites.
         return true
     }
