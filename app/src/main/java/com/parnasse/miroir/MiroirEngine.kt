@@ -62,6 +62,12 @@ class MiroirEngine {
      *  n'a pas été chargée : un registre vide ne veut pas dire une page vide. */
     private var pageLoaded = false
     var coeurUrl: String = "http://127.0.0.1:8008"
+    /** ⤒ LE TEXTE PUR (12/10/2026) — une page peut vivre de texte seul, sans
+     *  strokes ni groupes : le texte tapé (clavier) ou versé tient la page.
+     *  Persisté dans page_N/state.json (le fichier que l'ancienne coquille
+     *  testait déjà sans jamais l'écrire). L'encre prime quand elle existe :
+     *  pour les pages à strokes, le texte dérive des groupes (une source). */
+    var pageText: String = ""
     var parnasseBlockUuid: String? = null
     var parnasseTotal: Int = 0
     var parnasseNoteId: String? = null
@@ -1444,7 +1450,11 @@ class MiroirEngine {
         val bd = blockDir ?: return
         val hasLive = strokeRegistry.any { !it.isDeleted && it.points.isNotEmpty() }
         val dir = File(bd, "page_$currentPageIndex")
-        if (!hasLive) { dir.deleteRecursively(); return }
+        // ⤒ LE TEXTE PUR (12/10/2026) — une page qui porte du texte ne meurt pas
+        // sans encre : la loi ancienne supprimait le dossier dès qu'aucun stroke
+        // vivant (le texte du clavier s'évaporait). La page vit de sa matière —
+        // l'encre OU le texte.
+        if (!hasLive && pageText.isBlank()) { dir.deleteRecursively(); return }
         dir.mkdirs()
         bitmap?.let {
             FileOutputStream(File(dir, "bitmap.png")).use { out -> it.compress(Bitmap.CompressFormat.PNG, 90, out) }
@@ -1458,6 +1468,13 @@ class MiroirEngine {
             doc.endStroke(ci)
         }
         doc.flush(); doc.close()
+        // ⤒ TEXTE PUR : la page sans encre persiste son texte.
+        if (pageText.isNotBlank()) {
+            try {
+                File(dir, "state.json").writeText(
+                    org.json.JSONObject().apply { put("texte", pageText) }.toString())
+            } catch (e: Exception) { Log.w(TAG, "state.json: ${e.message}") }
+        }
         Log.i(TAG, "Page $currentPageIndex sauvegardée: ${liveIndices.size} strokes")
     }
 
@@ -1613,6 +1630,25 @@ class MiroirEngine {
         // ── MDM ──
         savePageMdm(dir)
 
+        // ⤒ TEXTE PUR (12/10/2026) — state.json, la persistance du texte seul.
+        // Une seule source : écrit seulement quand la page porte un texte sans
+        // encre (pageText) ; effacé sinon (le texte des pages à encre dérive
+        // des groupes, jamais d'un second exemplaire).
+        val stateFile = File(dir, "state.json")
+        if (pageText.isNotBlank()) {
+            try {
+                val j = org.json.JSONObject().apply {
+                    put("texte", pageText)
+                    if (navMode == NavMode.PARNASSE && parnasseNoteId != null) {
+                        put("note_id", parnasseNoteId!!)
+                    }
+                }
+                stateFile.writeText(j.toString())
+            } catch (e: Exception) { Log.w(TAG, "state.json écriture: ${e.message}") }
+        } else if (stateFile.exists()) {
+            stateFile.delete()
+        }
+
         // ═══ BAPTÊME en PARNASSE : grave note_id dans groups.json local. ═══
         // Le lien capture↔note devient l'identité (note_id), pas la position.
         // findPageByNoteId retrouve la matière par identité, même si la note
@@ -1762,6 +1798,25 @@ class MiroirEngine {
                     }
                 }
             }
+            // ␣ TEXTE PUR (12/10/2026) — une page peut vivre de texte seul :
+            // pas de vstar (ni neuf, ni témoin) mais un state.json → le texte
+            // tient la page. Le reste du chargement continue normalement
+            // (zéro stroke, zéro groupe) — la page s'ouvre vierge, son texte
+            // est prêt pour le versement.
+            pageText = ""
+            val stateFile = File(dir, "state.json")
+            if ((!vstarFile.exists() || vstarFile.length() == 0L) && stateFile.exists()) {
+                try {
+                    val j = org.json.JSONObject(stateFile.readText())
+                    pageText = j.optString("texte", "")
+                    if (pageText.isNotEmpty()) {
+                        Log.i(TAG, "loadPageFull page_$pdi: texte pur chargé (${pageText.length} chars)")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "loadPageFull page_$pdi: state.json illisible — ${e.message}")
+                }
+            }
+
             // ═══ LA SENTINELLE VEILLE — le sculpteur façonne la forme ancienne ═══
             // « Quand une note vit mal, façonner la forme, jamais le sens. »
             // Un .vstar v1.1 (header JSON + 14 B/token) est mal lu par le décodeur v2 :
@@ -2099,6 +2154,114 @@ class MiroirEngine {
             Log.w(TAG, "loadGroupsJson: ${e.message}")
         }
         return 0
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ⤒ LE VERSEMENT (12/10/2026) — le commit manuel du Capitaine
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** Le texte de lecture de la page courante : le texte pur s'il tient la
+     *  page (state.json), sinon le transcrit des groupes dans l'ordre de
+     *  l'affichage — la MÊME mécanique que savePageMdm (une seule lecture :
+     *  groupLabels + groupAnchor + cachedTemplateLines + snapToLine), rendu
+     *  nu, sans les décorations @mot{s/p}. */
+    fun buildReadingOrderText(): String {
+        if (pageText.isNotBlank()) return pageText
+        val items = mutableListOf<Triple<String, Int, Float>>()
+        for ((firstIdx, label) in groupLabels) {
+            val anchor = groupAnchor[firstIdx] ?: continue
+            val clean = cleanLabelForMdm(label)
+            if (clean.isEmpty()) continue
+            val lineIdx = if (cachedTemplateLines.isNotEmpty()) {
+                cachedTemplateLines.indexOf(snapToLine(anchor.second)).takeIf { it >= 0 } ?: 0
+            } else 0
+            items.add(Triple(clean, lineIdx, anchor.first))
+        }
+        if (items.isEmpty()) return ""
+        items.sortWith(compareBy<Triple<String, Int, Float>> { it.second }.thenBy { it.third })
+        val byLine = items.groupBy { it.second }
+        val sb = StringBuilder()
+        val totalLines = cachedTemplateLines.size
+        if (totalLines <= 0) return ""
+        for (lineIdx in 0 until totalLines) {
+            byLine[lineIdx]?.let { sb.append(it.joinToString(" ") { t -> t.first }) }
+            if (lineIdx < totalLines - 1) sb.append("\n")
+        }
+        return sb.toString().trimEnd('\n')
+    }
+
+    /** Le texte de TOUTES les pages du bloc ouvert, dans l'ordre : pour chaque
+     *  page, le texte pur (state.json) s'il existe, sinon le MDM nu (le
+     *  transcrit sans les décorations @mot{s/p}). Ne recalcume jamais ce qui
+     *  n'a pas changé : on lit les fichiers, pas les groupes des autres pages. */
+    fun buildAllPagesText(): String {
+        val bd = blockDir ?: return buildReadingOrderText()
+        if (!bd.exists() || !bd.isDirectory) return buildReadingOrderText()
+        val pageDirs = bd.listFiles()
+            ?.filter { it.isDirectory && it.name.startsWith("page_") &&
+                (java.io.File(it, "page.vstar").exists() ||
+                 java.io.File(it, "page.mdm").exists() ||
+                 java.io.File(it, "state.json").exists()) }
+            ?.sortedBy { it.name.removePrefix("page_").toIntOrNull() ?: -1 }
+            ?: emptyList()
+        val sb = StringBuilder()
+        for (pd in pageDirs) {
+            val pageIdx = pd.name.removePrefix("page_").toIntOrNull() ?: continue
+            val textePage: String = when {
+                pageIdx == currentPageIndex -> buildReadingOrderText()
+                else -> {
+                    val st = java.io.File(pd, "state.json")
+                    if (st.exists()) {
+                        try { org.json.JSONObject(st.readText()).optString("texte", "") }
+                        catch (_: Exception) { "" }
+                    } else {
+                        val mdm = java.io.File(pd, "page.mdm")
+                        if (mdm.exists()) mdm.readText()
+                            .replace(Regex("""@(\S+)\{[^}]*}"""), "$1")
+                            .replace(Regex("""@(\S+)"""), "$1")
+                        else ""
+                    }
+                }
+            }
+            if (textePage.isNotBlank()) {
+                if (sb.isNotEmpty()) sb.append("\n")
+                sb.append(textePage.trim())
+            }
+        }
+        return sb.toString().trim()
+    }
+
+    /** ⤒ Verse le texte au Cœur (POST /api/miroir/state, flag_up) — le commit
+     *  manuel. pageSeule=true → la page courante ; false → toutes les pages du
+     *  bloc ouvert. L'identité d'abord : note_id de la page courante en
+     *  PARNASSE (le foyer dicté), sinon le baptême local. */
+    fun commitTexte(pageSeule: Boolean) {
+        val bd = blockDir ?: return
+        val texte = if (pageSeule) buildReadingOrderText() else buildAllPagesText()
+        if (texte.isBlank()) { Log.w(TAG, "⤒ commitTexte: rien à verser"); return }
+        val nid = if (navMode == NavMode.PARNASSE) parnasseNoteId else readPageNoteId(currentPageIndex)
+        val json = org.json.JSONObject().apply {
+            put("block_id", bd.name)
+            put("page_n", currentPageIndex)
+            put("text", texte)
+            nid?.let { put("note_id", it) }
+            // ⚠️ Ne jamais envoyer total_notes=0 — la source de vérité est Parnasse.
+            put("flag_up", true)
+        }
+        Thread {
+            try {
+                val conn = java.net.URL("$coeurUrl/api/miroir/state").openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.write(json.toString().toByteArray())
+                val code = conn.responseCode
+                conn.disconnect()
+                Log.i(TAG, "⤒ Versement ${if (pageSeule) "page" else "bloc"}: chars=${texte.length} (HTTP $code)")
+            } catch (e: Exception) {
+                Log.w(TAG, "⤒ commitTexte: ${e.message}")
+            }
+        }.start()
     }
 
     private fun savePageMdm(dir: File) {

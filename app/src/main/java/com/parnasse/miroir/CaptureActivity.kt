@@ -492,6 +492,18 @@ class CaptureActivity : Activity() {
             onMdmButtonClick()
         })
 
+        // ── ⤒ LE VERSEMENT (12/10/2026) — le commit manuel du Capitaine ──
+        // Clic court = verser la page courante ; appui long = verser tout le bloc.
+        toolbar.addView(makeToolBtn("\u2912", Color.argb(200, 0, 110, 80)) { view ->
+            view.setOnLongClickListener {
+                engine.commitTexte(pageSeule = false)
+                Toast.makeText(this, "⤒ Bloc versé au Cœur", Toast.LENGTH_SHORT).show()
+                true
+            }
+            engine.commitTexte(pageSeule = true)
+            Toast.makeText(this, "⤒ Page versée au Cœur", Toast.LENGTH_SHORT).show()
+        })
+
         // ── Espace pousseur droit ──
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 0, 0.15f))
 
