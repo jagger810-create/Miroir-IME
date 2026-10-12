@@ -145,7 +145,9 @@ class MiroirIME : InputMethodService() {
 
      // ── Vue clavier mise en forme ─────────────────────────────────────
      private var formattingPanel: android.widget.LinearLayout? = null
-     private var isFormattingMode = false
+     // ⤒ LA COQUILLE NAÎT CLAVIER (12/10/2026) — la vue de base de l'IME est le
+     // clavier à touches ; le manuscrit est la bascule (✍ vers le standalone).
+     private var isFormattingMode = true
      private var isFormattingToggleInProgress = false  // VALSE : anti-race avec le polling Cœur
      private var isShiftLocked = false
      private var isInsertionMode = false          // sous-session capture pour insertion ciblée
@@ -2323,6 +2325,19 @@ class MiroirIME : InputMethodService() {
         }
 
         initTouchHelper(surface)
+        // ⤒ LA COQUILLE NAÎT CLAVIER (12/10/2026) — la posture initiale est celle
+        // du toggle (panel visible, surface cachée, fond transparent, non plein
+        // écran) mais sans sauvegarde ni synchro : la page est vierge à la
+        // naissance. L'ancienne capture interne reste derrière le bouton 📝
+        // jusqu'à sa mort.
+        if (isFormattingMode) {
+            root.setBackgroundColor(Color.TRANSPARENT)
+            formattingPanel?.setBackgroundColor(Color.argb(230, 18, 20, 26))
+            surface.visibility = View.GONE
+            formattingPanel?.visibility = View.VISIBLE
+            updateFullscreenMode()
+            Log.i(TAG, "onCreateInputView — la coquille naît clavier")
+        }
         return root
     }
 
@@ -2558,9 +2573,14 @@ class MiroirIME : InputMethodService() {
         if (v != null) initTouchHelper(v)
         // Template
         imeView?.let { if (it.height > 0) updateTemplateSpacing(it.height) }
-        // Mode formatage si demandé
+        // Mode formatage si demandé — ⤒ uniquement quand PARNASSE dicte un
+        // contexte (12/10/2026) : sans contexte (champ hors Parnasse), la
+        // coquille garde sa naissance clavier. L'ancienne dictée renvoyait
+        // en capture plein écran à chaque onStartInputView (targetFormatting
+        // faux partait de false ; avec le nouveau défaut clavier, le toggle
+        // écrasait la posture de naissance).
         val targetFormatting = parnasseContext?.mode == "note" || parnasseContext?.mode == "formatage"
-        if (isFormattingMode != targetFormatting) {
+        if (parnasseContext != null && isFormattingMode != targetFormatting) {
             isFormattingToggleInProgress = true
             toggleFormattingMode()
             uiHandler.postDelayed({ isFormattingToggleInProgress = false }, 300)
