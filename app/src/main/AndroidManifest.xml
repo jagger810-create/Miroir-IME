@@ -32,10 +32,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ⚙ Calibration — accessible via l'IME (bouton ⚙) -->
+        <!-- ⚙ Calibration — accessible via l'IME (bouton ⚙) et via l'app Paramètres -->
+        <!-- ⚠️ exported=true OBLIGATOIRE (12/10/2026) : l'app Paramètres système (uid
+             différent) ouvre settingsActivity et se prenait Permission Denial —
+             « les paramètres sont inaccessibles » depuis des semaines. -->
         <activity
             android:name=".CalibrationActivity"
-            android:exported="false"
+            android:exported="true"
             android:label="Calibration" />
 
         <service
