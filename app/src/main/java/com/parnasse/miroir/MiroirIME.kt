@@ -2000,6 +2000,26 @@ class MiroirIME : InputMethodService() {
             }
         })
 
+        // ═══ ✍ LA BASCULE VERS LA PAGE MANUSCRITE (12/10/2026) ═══
+        // Le standalone est LA vue du nouvel IME : le clavier reste la vue de
+        // base (ce panneau), et ce bouton ouvre CaptureActivity sur le bloc
+        // courant — le contexte Parnasse de l'IME (bloc, note). Le token né à
+        // onStartInput reste chaud pendant la traversée ; il se fige au retour
+        // du focus. Le mode "ime" laisse Parnasse dicter la position.
+        toolbar.addView(makeButton("\u270D") {
+            val ctx = parnasseContext
+            val intent = android.content.Intent(this@MiroirIME, CaptureActivity::class.java)
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (ctx != null && ctx.blockId.isNotEmpty()) {
+                intent.putExtra(CaptureActivity.EXTRA_BLOCK_ID, ctx.blockId)
+                ctx.noteId?.takeIf { it.isNotEmpty() }?.let {
+                    intent.putExtra(CaptureActivity.EXTRA_NOTE_ID, it)
+                }
+                intent.putExtra(CaptureActivity.EXTRA_MODE, "ime")
+            }
+            startActivity(intent)
+        })
+
         // ═══ Bascule capture / mise en forme ═══
         val formattingToggleBtn = makeButton("📝") {
             isFormattingToggleInProgress = true
@@ -2179,11 +2199,55 @@ class MiroirIME : InputMethodService() {
             shiftBtnRef?.setTextColor(if (isShiftLocked) Color.argb(255, 255, 200, 100) else Color.argb(255, 180, 200, 220))
         }
         shiftBtnRef = shiftBtn
+        // ⤒ Bascule AZERTY ↔ QWERTY (12/10/2026) : appui long sur ⇧ — la
+        // disposition est persistée et prise au prochain affichage du clavier
+        // (la vue d'entrée ne se reforge pas à chaud : le TouchHelper ne se
+        // ré-initialise pas).
+        shiftBtn.setOnLongClickListener {
+            val prefs = getSharedPreferences("miroir_clavier", MODE_PRIVATE)
+            val nouvelle = if (prefs.getString("disposition", "azerty") == "azerty") "qwerty" else "azerty"
+            prefs.edit().putString("disposition", nouvelle).apply()
+            android.widget.Toast.makeText(this, "Clavier ${nouvelle.uppercase()} — au prochain affichage", android.widget.Toast.LENGTH_SHORT).show()
+            true
+        }
         formatRow3.addView(shiftBtn)
         // ── TAB (gauche) ──
         formatRow3.addView(makeActionBtn("⇥ TAB") { injectText("\t") })
         // ── ESPACE (étendu centre) ──
         formatRow3.addView(makeActionBtn("␣ ESPACE", weight = 1f) { injectText(" ") })
+
+        // ── Rangées de LETTRES (12/10/2026) — le clavier simple du Capitaine ──
+        // AZERTY par défaut (subtype fr), QWERTY en bascule — l'appui long sur ⇧
+        // change la disposition (persistée, prise au prochain affichage du clavier).
+        // Appui long sur une lettre = le chiffre ou le symbole de la touche.
+        val disposition = getSharedPreferences("miroir_clavier", MODE_PRIVATE)
+            .getString("disposition", "azerty") ?: "azerty"
+        val letterRows: List<List<Pair<String, String>>> = if (disposition == "qwerty") listOf(
+            listOf("q" to "1", "w" to "2", "e" to "3", "r" to "4", "t" to "5",
+                   "y" to "6", "u" to "7", "i" to "8", "o" to "9", "p" to "0"),
+            listOf("a" to "!", "s" to "?", "d" to ".", "f" to ",", "g" to ";",
+                   "h" to ":", "j" to "'", "k" to "\"", "l" to "-"),
+            listOf("z" to "è", "x" to "ê", "c" to "ç", "v" to "ù", "b" to "à", "n" to "é")
+        ) else listOf(
+            listOf("a" to "1", "z" to "2", "e" to "3", "r" to "4", "t" to "5",
+                   "y" to "6", "u" to "7", "i" to "8", "o" to "9", "p" to "0"),
+            listOf("q" to "!", "s" to "?", "d" to ".", "f" to ",", "g" to ";",
+                   "h" to ":", "j" to "'", "k" to "\"", "l" to "-", "m" to "_"),
+            listOf("w" to "è", "x" to "ê", "c" to "ç", "v" to "ù", "b" to "à", "n" to "é")
+        )
+        val letterRowsViews = letterRows.map { row ->
+            android.widget.LinearLayout(this).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            }.also { rowView ->
+                for ((lettre, symbole) in row) {
+                    rowView.addView(makePunctBtn(lettre).apply {
+                        setOnLongClickListener { injectText(symbole); true }
+                    })
+                }
+            }
+        }
 
         // ═══ Enveloppe clavier + retour vertical (couvre les 3 rangées) ═══
         val keyRows = android.widget.LinearLayout(this).apply {
@@ -2191,6 +2255,7 @@ class MiroirIME : InputMethodService() {
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
+        letterRowsViews.forEach { keyRows.addView(it) }
         keyRows.addView(formatRow1)
         keyRows.addView(formatRow2)
         keyRows.addView(formatRow3)
