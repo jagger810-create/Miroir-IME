@@ -2384,11 +2384,23 @@ class MiroirIME : InputMethodService() {
             return
         }
         if (parnasseContext == null) {
-            // ═══ Mode STANDALONE : page vierge temporaire (pas de bloc disque) ═══
-            blockDir = null
-            currentFieldKey = buildFieldKey(info)
-            currentPageIndex = 0
-            clearPage()
+            // ═══ Le tiroir du champ : chaque champ a SA maison, qui persiste. ═══
+            // La bascule ✍ ouvre la capture sur ce tiroir : le même champ doit
+            // retrouver sa maison (continuation du token d'intention), un champ
+            // neuf en naît une — paresseusement, au premier trait.
+            val fieldKey = buildFieldKey(info)
+            if (blockDir == null || currentFieldKey != fieldKey) {
+                val existing = findExistingBlock(fieldKey)
+                if (existing != null) {
+                    blockDir = existing
+                    currentPageIndex = maxOf(countPages() - 1, 0)
+                    Log.i(TAG, "Tiroir du champ retrouvé: ${existing.name} (${countPages()} pages)")
+                } else {
+                    blockDir = null  // maison créée paresseusement au premier trait
+                }
+                currentFieldKey = fieldKey
+            }
+            clearPage()  // vider la RAM — la page du tiroir sera chargée ci-dessous
             Log.i(TAG, "Page vierge standalone — prête pour capture")
         } else {
             // ═══ Vérifier si le bloc a changé (Flutter a navigué vers un autre bloc) ═══
