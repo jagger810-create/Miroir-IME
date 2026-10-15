@@ -38,7 +38,7 @@ Optimisé pour les tablettes **Onyx Boox** (E-Ink, stylet EMR) avec fallback sta
 └─────────────────────────────────────────────────────┘
 ```
 
-**51 fichiers Kotlin — ~8 700 lignes — APK debug 39 Mo (ML Kit inclus)**
+**MiroirIME ~5 500 lignes — APK debug ~42 Mo (ML Kit inclus)**
 
 ---
 
@@ -158,6 +158,7 @@ page.vstar   → flux vectoriel V★ v2.0, brut, append-only, 16 octets/token
 groups.json  → groupes de strokes, géométrie et ordre
 page.mdm     → composition spatiale lisible et ancres reconnues
 page.txt     → texte nettoyé destiné au Cœur
+state.json   → texte pur de la page (pageText — une page peut vivre de texte seul)
 bitmap.png   → rendu visuel de la page
 ```
 
@@ -185,6 +186,26 @@ Flutter Parnasse
 
 ---
 
+## 🚪 La bascule et le tiroir du champ (15/10/2026)
+
+> *« L'intention dans l'IME est de peupler le champ de texte ; les strokes sont une séquelle de l'intention. »*
+
+**La bascule ✍** (toolbar de l'IME) ouvre la capture sur **le tiroir du champ qu'on écrit** — jamais la capture active d'une session Parnasse d'avant :
+
+| Mode d'invocation | Contexte | Maître de la navigation |
+|---|---|---|
+| `ime` | Parnasse dicte (bloc + note du contexte) | Le Cœur (`NavMode.PARNASSE`) |
+| `ime-local` | Champ d'une app tierce — le tiroir du champ (bloc courant de l'IME) | Le Miroir (`NavMode.LOCAL`) |
+| `bloc` | Clic PNG depuis Flutter (`parnasse_context.json`) | Le Cœur |
+
+**Le tiroir persiste** : l'IME ne jette plus son bloc à chaque focus — le même champ retrouve sa maison (`findExistingBlock`, continuation du token), un champ neuf en naît une paresseusement, au premier trait. La main rappelle les tokens par **📂** (tri par fraîcheur, preview, tiroirs vides exclus).
+
+**Deux régimes, la même page** : en mode champ, la vérité est le **texte** — l'encre est la séquelle, la reco ne fait que transcrire ; en Parnasse, les strokes restent la source de vérité.
+
+**Graine tracée** (à planter) : l'oracle à la bascule — champ **peuplé** → rouvrir la maison du champ, page semée du texte existant (édition, commit par-dessus au ✓) ; champ **vide** → token d'intention neuf. Clé = `app + inputType + hintText` — le texte jamais dans la clé.
+
+---
+
 ## 🖥️ EPD & Fontaine (Boox)
 
 Le rendu E-Ink utilise le **SDK Onyx OpenBridge** (`TouchHelper` + `EpdController`) :
@@ -206,7 +227,7 @@ Ce fallback d'affichage ne doit pas être confondu avec la capture aux doigts. L
 
 | Composant | Fichier | Rôle |
 |-----------|---------|------|
-| **MiroirIME** | `MiroirIME.kt` (1 086 lignes) | IME système — clavier manuscrit contextuel |
+| **MiroirIME** | `MiroirIME.kt` (~5 500 lignes) | IME système — la coquille naît clavier, la bascule ✍ ouvre la capture sur le tiroir du champ |
 | **CaptureActivity** | `CaptureActivity.kt` | Surface standalone — écriture libre |
 | **MiroirEngine** | `MiroirEngine.kt` | Moteur partagé — strokes, groupes, V★, bitmap, MDM |
 | **GroupManager** | `GroupManager.kt` (350 lignes) | Groupement spatial par blobs elliptiques |
