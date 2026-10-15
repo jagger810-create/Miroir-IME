@@ -2013,11 +2013,20 @@ class MiroirIME : InputMethodService() {
             val intent = android.content.Intent(this@MiroirIME, CaptureActivity::class.java)
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             if (ctx != null && ctx.blockId.isNotEmpty()) {
+                // Parnasse dicte : bloc + note du contexte, le Cœur mène la navigation.
                 intent.putExtra(CaptureActivity.EXTRA_BLOCK_ID, ctx.blockId)
                 ctx.noteId?.takeIf { it.isNotEmpty() }?.let {
                     intent.putExtra(CaptureActivity.EXTRA_NOTE_ID, it)
                 }
                 intent.putExtra(CaptureActivity.EXTRA_MODE, "ime")
+            } else {
+                // Champ étranger : le tiroir du champ EST le bloc courant de l'IME.
+                // La capture continue CE tiroir (sa dernière page ou une page
+                // neuve), jamais la capture active d'une session Parnasse d'avant.
+                blockDir?.let {
+                    intent.putExtra(CaptureActivity.EXTRA_BLOCK_ID, it.name)
+                    intent.putExtra(CaptureActivity.EXTRA_MODE, "ime-local")
+                }
             }
             startActivity(intent)
         })

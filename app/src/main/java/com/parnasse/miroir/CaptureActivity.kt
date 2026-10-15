@@ -125,8 +125,12 @@ class CaptureActivity : Activity() {
         invocNoteId  = intent.getStringExtra(EXTRA_NOTE_ID)
         invocMode    = intent.getStringExtra(EXTRA_MODE) ?: "bloc"
 
-        // ═══ Fallback : contexte via fichier partagé (launchIME ne passe pas d'extras) ═══
-        if (invocBlockId == null) {
+        // ═══ Fallback : contexte via fichier partagé — le chemin du launchCapture
+        // Flutter (le clic sur le PNG ne passe pas les extras de contexte). La
+        // bascule ✍ de l'IME, elle, dit TOUJOURS son bloc dans l'intent (mode
+        // "ime" ou "ime-local") : le fichier ne doit jamais la rattraper — un
+        // champ étranger n'a pas de contexte Parnasse, il a SON tiroir.
+        if (invocBlockId == null && invocMode == "bloc") {
             try {
                 val ctxFile = java.io.File("/storage/emulated/0/Documents/parnasse/miroir/parnasse_context.json")
                 if (ctxFile.exists()) {
@@ -146,13 +150,15 @@ class CaptureActivity : Activity() {
         }
 
         val isContextual = invocBlockId != null
+        // ═══ "ime-local" : le tiroir d'un champ étranger — le Miroir garde la main.
+        val localMaster = invocMode == "ime-local"
         Log.i(TAG, "=== CAPTURE ACTIVITY === mode=$invocMode contextual=$isContextual blockId=$invocBlockId page=$invocPageN noteId=$invocNoteId")
 
         // ═══ BASCULE : qui est le maître de la navigation ? ═══
-        // Contextuel (ouvert depuis Flutter, bloc de l'étagère) → Parnasse dicte.
-        // Standalone (depuis le lanceur) → le Miroir garde la main sur ses blocs.
+        // Contextuel Parnasse (Flutter, ou l'IME en contexte dicté) → Parnasse dicte.
+        // Local (le lanceur, ou le tiroir d'un champ étranger) → le Miroir garde la main.
         engine.coeurUrl = coeurUrl
-        if (isContextual) {
+        if (isContextual && !localMaster) {
             engine.navMode = NavMode.PARNASSE
             engine.parnasseBlockUuid = invocBlockId
             // ═══ L'identité d'abord : la note invoquée, jamais la position ═══
@@ -164,12 +170,20 @@ class CaptureActivity : Activity() {
         recognizer = DigitalInkWrapper(this).also { it.load() }
 
         if (isContextual) {
-            val mirrorName = resolveMirrorBlockName(invocBlockId!!)
-            val blockDirName = mirrorName ?: invocBlockId!!
-            engine.openBlockDir(this, blockDirName)
-            Log.i(TAG, "📂 Bloc ouvert: $blockDirName (résolu depuis $invocBlockId)")
-            // ⚓ Pas d'étiquette → déclarer l'amarrage au Cœur (canal universel)
-            if (mirrorName == null) amarrerBloc(invocBlockId!!)
+            if (localMaster) {
+                // Le tiroir du champ : le Miroir ouvre SON bloc tel quel — pas de
+                // résolution d'étiquette ni d'amarrage au Cœur (un champ étranger
+                // n'est pas un canal de l'étagère).
+                engine.openBlockDir(this, invocBlockId!!)
+                Log.i(TAG, "📂 Bloc du champ ouvert: $invocBlockId (mode ime-local)")
+            } else {
+                val mirrorName = resolveMirrorBlockName(invocBlockId!!)
+                val blockDirName = mirrorName ?: invocBlockId!!
+                engine.openBlockDir(this, blockDirName)
+                Log.i(TAG, "📂 Bloc ouvert: $blockDirName (résolu depuis $invocBlockId)")
+                // ⚓ Pas d'étiquette → déclarer l'amarrage au Cœur (canal universel)
+                if (mirrorName == null) amarrerBloc(invocBlockId!!)
+            }
         } else {
             engine.openBlockDir(this, "standalone")
         }
@@ -261,7 +275,13 @@ class CaptureActivity : Activity() {
         invocPageN   = newPageN
         invocNoteId  = newNoteId
         invocMode    = newMode
-        Log.i(TAG, "♻ onNewIntent: bloc=$newBlockId page=$newPageN noteId=$newNoteId")
+        Log.i(TAG, "♻ onNewIntent: bloc=$newBlockId page=$newPageN noteId=$newNoteId mode=$newMode")
+
+        // ═══ Le maître suit l'invocation — jamais le premier onCreate. ═══
+        // "ime-local" (tiroir d'un champ étranger) : le Miroir garde la main ;
+        // tout autre mode contextuel : Parnasse dicte.
+        val localMaster = newMode == "ime-local"
+        engine.navMode = if (localMaster) NavMode.LOCAL else NavMode.PARNASSE
 
         // ═══ L'identité suit l'invocation — jamais la position ═══
         engine.parnasseNoteId = newNoteId?.takeIf { it.isNotEmpty() }
@@ -270,15 +290,21 @@ class CaptureActivity : Activity() {
         // requête miroir/page cherche la note du nouveau bloc dans l'ANCIEN
         // → note_id = null → la fenêtre affiche une page vierge (la capture
         // « ne charge pas »). Le coq suit la captine, la rime suit l'invocation.
-        engine.parnasseBlockUuid = newBlockId
+        engine.parnasseBlockUuid = if (localMaster) null else newBlockId
 
         if (blocChanged) {
-            val mirrorName = resolveMirrorBlockName(newBlockId)
-            val blockDirName = mirrorName ?: newBlockId
-            engine.openBlockDir(this, blockDirName)
-            Log.i(TAG, "♻ Bloc ouvert: $blockDirName (résolu depuis $newBlockId)")
-            // ⚓ Pas d'étiquette → déclarer l'amarrage au Cœur (canal universel)
-            if (mirrorName == null) amarrerBloc(newBlockId)
+            if (localMaster) {
+                // Le tiroir du champ : pas de résolution d'étiquette ni d'amarrage.
+                engine.openBlockDir(this, newBlockId)
+                Log.i(TAG, "♻ Bloc du champ ouvert: $newBlockId (mode ime-local)")
+            } else {
+                val mirrorName = resolveMirrorBlockName(newBlockId)
+                val blockDirName = mirrorName ?: newBlockId
+                engine.openBlockDir(this, blockDirName)
+                Log.i(TAG, "♻ Bloc ouvert: $blockDirName (résolu depuis $newBlockId)")
+                // ⚓ Pas d'étiquette → déclarer l'amarrage au Cœur (canal universel)
+                if (mirrorName == null) amarrerBloc(newBlockId)
+            }
             engine.initGroupManager(this)
             engine.updateTemplateSpacing(this, resources.displayMetrics.heightPixels)
             buildBlockView()
@@ -287,6 +313,11 @@ class CaptureActivity : Activity() {
         // ═══ Résolution par note_id (identité) avec repli pageN — comme onCreate ═══
         // ⚠️ LOCAL seulement. En PARNASSE, la position vient de Parnasse (newPageN).
         var targetPage = newPageN
+        if (localMaster && blocChanged) {
+            // Continuation du tiroir : la dernière page, comme le onCreate LOCAL.
+            val totalPages = engine.countPages()
+            targetPage = if (totalPages > 0) totalPages - 1 else 0
+        }
         if (!newNoteId.isNullOrEmpty() && engine.navMode != NavMode.PARNASSE) {
             val total = engine.countPages()
             var found = -1
