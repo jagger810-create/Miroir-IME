@@ -134,6 +134,49 @@ class MiroirEngine {
     val propositions = mutableMapOf<Int, String>()
     val propositionsListe = mutableMapOf<Int, List<String>>()
 
+    // ── LA PRÉDICTION (la cerise, 18/10/2026) ──────────────────────────────
+    // firstIdx → la proposition du proposeur prédictif (POST /api/prediction/
+    // proposer, famille glossaire). Le label affiche alors la voix en GRIS :
+    // les lettres écrites restent noires (le nominal), les prédites en gris
+    // moyen. La prédiction n'écrit rien — elle attend la ratification de la
+    // main (le tenir), comme la coche attend la sienne.
+    val predictions = mutableMapOf<Int, String>()
+
+    /** La prédiction est demandée quand le label naît (la sentinelle la pose,
+     *  la prédiction suit). Le label frais part comme contexte : le glossaire
+     *  répond s'il connaît la forme lue (« tescte » → « texte »). Sans
+     *  candidat, la voix se tait — pas de gris. */
+    fun demanderPrediction(firstIdx: Int, label: String) {
+        if (label.isBlank()) return
+        if (predictions.containsKey(firstIdx)) return  // déjà demandée pour ce label
+        val json = org.json.JSONObject().apply { put("contexte", label) }
+        Thread {
+            try {
+                val conn = java.net.URL("$coeurUrl/api/prediction/proposer").openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.write(json.toString().toByteArray())
+                val corps = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+                val arr = org.json.JSONObject(corps).optJSONArray("candidats") ?: org.json.JSONArray()
+                var choisie: String? = null
+                for (i in 0 until arr.length()) {
+                    val c = arr.getJSONObject(i)
+                    if (c.optString("source") == label) { choisie = c.optString("texte"); break }
+                }
+                if (choisie == null && arr.length() > 0) choisie = arr.getJSONObject(0).optString("texte")
+                if (choisie != null && choisie.isNotBlank() && choisie != label) {
+                    predictions[firstIdx] = choisie
+                    Log.i(TAG, "▸ Prédiction: '$label' → '$choisie' (voix grise, en attente de la main)")
+                    onPropositionsArrivees?.invoke()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "▸ Prédiction: la voix ne répond pas — ${e.message}")
+            }
+        }.start()
+    }
+
     /** 🎙️ Prévenir l'écran quand la voix est arrivée (l'affichage est
      *  l'incitation : sans ce signal, les propositions restent invisibles
      *  jusqu'au prochain hasard de rafraîchissement). */

@@ -408,6 +408,9 @@ class CaptureActivity : Activity() {
                             val anchor = registrySnapshot.getOrNull(firstIdx)?.points?.firstOrNull()
                             if (anchor != null) engine.groupAnchor[firstIdx] = anchor
                             Log.i(TAG, "Reconnu: '$result' (groupe ${groupId.take(8)}, ${indices.size} strokes)")
+                            // 🔮 La prédiction suit la pose : le label frais part vers
+                            // le proposeur — la voix grise reviendra (ou se taira).
+                            engine.demanderPrediction(firstIdx, result)
                             // ═══ Notification Cœur : le mot est reconnu, la SD card est déjà à jour ═══
                             notifyCoeur()
                         }
@@ -538,10 +541,25 @@ class CaptureActivity : Activity() {
         // ── Espace pousseur droit ──
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 0, 0.15f))
 
-        // ── Bouton + (nouvelle page) ──
-        toolbar.addView(makeToolBtn("+", Color.argb(200, 0, 100, 50)) { view ->
-            showPlusMenu(view)
-        })
+        // ── Bouton + (nouvelle page) — OU ␐ LA PORTE ↓ EN VUE IME (18/10/2026) ──
+        // La bascule ✍ (mode "ime"/"ime-local") ouvre le tiroir DU CHAMP : le +
+        // dort son métier de pagination, la porte ↓ prend sa place — les trois
+        // commit. Clic = remplacer ; clic long = le menu (insérer · committer ·
+        // remplacer). La commande se couche dans le filesDir commun et l'IME
+        // l'exécute au retour — il est le seul porteur du champ hôte.
+        if (invocMode == "ime" || invocMode == "ime-local") {
+            toolbar.addView(makeToolBtn("\u2193", Color.argb(200, 0, 110, 80)) { view ->
+                view.setOnLongClickListener {
+                    showPorteCommitMenu(view)
+                    true
+                }
+                verserPorte("Remplacer")
+            })
+        } else {
+            toolbar.addView(makeToolBtn("+", Color.argb(200, 0, 100, 50)) { view ->
+                showPlusMenu(view)
+            })
+        }
 
         root.addView(toolbar, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
@@ -781,6 +799,46 @@ class CaptureActivity : Activity() {
             captureView?.clearCanvas()
             updatePageCounter()
             captureView?.invalidate()
+            true
+        }
+        popup.show()
+    }
+
+    // ── ␐ LA PORTE ↓ DU TIROIR (18/10/2026) — le standalone n'a pas
+    // d'InputConnection : les trois commit se couchent dans le filesDir
+    // commun (porte-commit.json), l'IME les exécute au retour dans le champ
+    // hôte — il est le seul porteur. Un fichier, une seule source.
+
+    /** ␐ Cliche le geste (mode + texte) puis ferme le tiroir — le retour à
+     *  l'IME exécute la commande. */
+    private fun verserPorte(mode: String) {
+        val texte = engine.buildReadingOrderText().trim()
+        if (texte.isEmpty()) {
+            android.widget.Toast.makeText(this, "↓ rien à envoyer", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val f = java.io.File(filesDir, "porte-commit.json")
+            f.writeText(org.json.JSONObject().apply {
+                put("mode", mode)
+                put("texte", texte)
+            }.toString())
+            Log.i(TAG, "␐ Porte: '$mode' couché (${texte.length}c) — retour au champ")
+        } catch (e: Exception) {
+            Log.w(TAG, "␐ Porte: ${e.message}")
+            return
+        }
+        finish()
+    }
+
+    /** ␐ Le menu flottant des trois commit (la porte en vue ime). */
+    private fun showPorteCommitMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add("Insérer — à la position du curseur")
+        popup.menu.add("Committer — en composition")
+        popup.menu.add("Remplacer — tout le champ")
+        popup.setOnMenuItemClickListener { item ->
+            verserPorte(item.title.toString().substringBefore(" "))
             true
         }
         popup.show()

@@ -206,6 +206,11 @@ Flutter Parnasse
 
 **La ratification remonte (18/10/2026)** : le clic long sur la coche ✓ et le verdict ● du mode correction tiennent le label ET remontent la paire jugée {nominal → courant} au Cœur (`POST /api/glossaire/ratifier`) — la table des couples de lettres (`glossaire-personnel.json`) s'enrichit du geste même. Côté Cœur, la PRÉDICTION (la cerise, `POST /api/prediction/proposer`, famille « glossaire ») lit la paire dès le geste suivant : côté IME la source est le texte — zéro phonétique, texte contre texte. Éprouvé sur tablette : la main tient « un » (lu « an »), la paire se couche, le champ suivant se la voit proposer.
 
+**La voix grise et la porte ↓ (18/10/2026)** :
+- **La prédiction naît où le label naît** : à la pose du label (la sentinelle), le label frais part vers le proposeur ; la proposition s'affiche dans le label — **les lettres écrites restent en encre noire, les lettres prédites en gris moyen** (LCS). La prédiction n'écrit rien : elle attend la ratification de la main.
+- **La porte ↓** : dans le tiroir (vue ime de la bascule ✍), le bouton **+** devient **↓** — clic simple = remplacer ; clic long = le menu des trois (insérer sélectionné · committer en composition · remplacer). Le tiroir couche le geste dans le filesDir commun et se ferme ; **l'IME l'exécute au retour** — il est le seul porteur du champ hôte. Hors vue ime (le carnet), le + garde sa pagination.
+- **La mort du 📝** : la vue interne historique n'a plus de porte — l'IME naît clavier, la main passe par ✍ (le standalone). La coquille historique vit encore dans le code jusqu'à sa fin, sans accès.
+
 ---
 
 ## 🖥️ EPD & Fontaine (Boox)

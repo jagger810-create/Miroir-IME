@@ -61,6 +61,13 @@ class CaptureSurfaceView(context: Context, val engine: MiroirEngine) : View(cont
         color = Color.BLACK; textSize = 48f; isAntiAlias = false
         textAlign = Paint.Align.LEFT
     }
+    /** 🔮 LA VOIX GRISE (18/10/2026) — les lettres PRÉDITES par le proposeur :
+     *  un gris moyen. L'encre écrite reste noire, la prédiction attend la
+     *  ratification de la main sans jamais se substituer. */
+    private val paintPrediction = Paint().apply {
+        color = Color.rgb(110, 110, 110); textSize = 48f; isAntiAlias = false
+        textAlign = Paint.Align.LEFT
+    }
 
     // 🎙️ LA VOIX VISIBLE (19/09/2026) — « l'affichage est l'incitation » : quand
     // les propositions arrivent du pont (asynchrones), l'écran se redessine — le
@@ -1447,7 +1454,10 @@ class CaptureSurfaceView(context: Context, val engine: MiroirEngine) : View(cont
             // puces ▲▼ du focus (jamais par substitution).
             val propose = engine.propositions[firstIdx]
             val texte = label
-            val textW = labelPaint.measureText(texte)
+            // 🔮 Le fond du label couvre la plus longue des deux formes —
+            // le nominal affiché ou la proposition (la voix grise).
+            val affiche = engine.predictions[firstIdx] ?: texte
+            val textW = labelPaint.measureText(affiche)
             val labelX = anchorX  // position de l'encre (premier point du groupe)
             val labelY = snapY + 24f   // ⛪ 05/10 — quelques pixels plus bas sous l'interligne
             val bgRect = android.graphics.RectF(
@@ -1460,10 +1470,17 @@ class CaptureSurfaceView(context: Context, val engine: MiroirEngine) : View(cont
             }
             canvas.drawRoundRect(bgRect, 6f, 6f, Paint().apply { color = bgColor; style = Paint.Style.FILL })
             val nominal = engine.relecture.nominaux[firstIdx]
-            if (nominal != null && nominal != label) {
-                dessinerLabelDiff(canvas, texte, labelX, labelY, nominal)
-            } else {
-                canvas.drawText(texte, labelX, labelY, labelPaint)
+            val prediction = engine.predictions[firstIdx]
+            when {
+                // 🔮 LA VOIX GRISE — le label affiche la proposition : les
+                // lettres écrites (communes) restent noires, les prédites en
+                // gris moyen. La main voit d'un coup d'œil ce qu'elle ratifie.
+                prediction != null && prediction != texte ->
+                    dessinerLabelPrediction(canvas, prediction, labelX, labelY, texte)
+                nominal != null && nominal != label ->
+                    dessinerLabelDiff(canvas, texte, labelX, labelY, nominal)
+                else ->
+                    canvas.drawText(texte, labelX, labelY, labelPaint)
             }
             if (propose != null) {
                 // ⛪ LE SOULIGNEMENT SEUL (27/09, e-ink) — le transcrit reste nu,
@@ -1515,6 +1532,45 @@ class CaptureSurfaceView(context: Context, val engine: MiroirEngine) : View(cont
             while (fin < m && communes[fin] == communes[k]) fin++
             val seg = texte.substring(k, fin)
             canvas.drawText(seg, cx, y, if (corrige) encreCorrigee else labelPaint)
+            cx += labelPaint.measureText(seg)
+            k = fin
+        }
+    }
+
+    /** 🔮 LA VOIX GRISE (18/10/2026) — la proposition s'affiche dans le label :
+     *  les lettres écrites (communes avec le nominal) restent en encre noire,
+     *  les lettres prédites passent au gris moyen. LCS, mots courts — la main
+     *  voit d'un coup d'œil ce qu'elle ratifie, sans jamais de substitution. */
+    private fun dessinerLabelPrediction(canvas: Canvas, texte: String, x: Float, y: Float, nominal: String) {
+        val n = nominal.length
+        val m = texte.length
+        if (n == 0 || m == 0) {
+            canvas.drawText(texte, x, y, encreCorrigee)
+            return
+        }
+        val dp = Array(n + 1) { IntArray(m + 1) }
+        for (i in n - 1 downTo 0) {
+            for (j in m - 1 downTo 0) {
+                dp[i][j] = if (nominal[i] == texte[j]) dp[i + 1][j + 1] + 1 else maxOf(dp[i + 1][j], dp[i][j + 1])
+            }
+        }
+        val communes = BooleanArray(m)
+        var i = 0; var j = 0
+        while (i < n && j < m) {
+            when {
+                nominal[i] == texte[j] -> { communes[j] = true; i++; j++ }
+                dp[i + 1][j] >= dp[i][j + 1] -> i++
+                else -> j++
+            }
+        }
+        var cx = x
+        var k = 0
+        while (k < m) {
+            val predite = !communes[k]
+            var fin = k + 1
+            while (fin < m && communes[fin] == communes[k]) fin++
+            val seg = texte.substring(k, fin)
+            canvas.drawText(seg, cx, y, if (predite) paintPrediction else encreCorrigee)
             cx += labelPaint.measureText(seg)
             k = fin
         }

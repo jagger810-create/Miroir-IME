@@ -117,6 +117,49 @@ class MiroirIME : InputMethodService() {
     private val originalLabels get() = relecture.nominaux
     private val controlledLabels = mutableSetOf<Int>()  // labels marqués comme contrôlés (📌)
     private val personalLabels = mutableSetOf<Int>()   // labels exclus du dataset (🔒)
+
+    // ── LA PRÉDICTION (la cerise, 18/10/2026) ──────────────────────────────
+    // firstIdx → la proposition du proposeur prédictif (POST /api/prediction/
+    // proposer, famille glossaire). Le label affiche la voix en GRIS : les
+    // lettres écrites (le nominal) restent noires, les prédites en gris
+    // moyen. La prédiction n'écrit rien — elle attend la ratification de la
+    // main (le tenir), comme la coche attend la sienne.
+    private val predictions = mutableMapOf<Int, String>()
+
+    /** La prédiction suit la pose du label (la sentinelle). Le label frais
+     *  part comme contexte : le glossaire répond s'il connaît la forme lue
+     *  (« tescte » → « texte »). Sans candidat, la voix se tait — pas de gris. */
+    private fun demanderPrediction(firstIdx: Int, label: String) {
+        if (label.isBlank() || predictions.containsKey(firstIdx)) return
+        val json = org.json.JSONObject().apply { put("contexte", label) }
+        Thread {
+            try {
+                val coeur = parnasseContext?.coeurUrl ?: "http://127.0.0.1:8008"
+                val conn = java.net.URL("$coeur/api/prediction/proposer").openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.write(json.toString().toByteArray())
+                val corps = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+                val arr = org.json.JSONObject(corps).optJSONArray("candidats") ?: org.json.JSONArray()
+                var choisie: String? = null
+                for (i in 0 until arr.length()) {
+                    val c = arr.getJSONObject(i)
+                    if (c.optString("source") == label) { choisie = c.optString("texte"); break }
+                }
+                if (choisie == null && arr.length() > 0) choisie = arr.getJSONObject(0).optString("texte")
+                if (choisie != null && choisie.isNotBlank() && choisie != label) {
+                    predictions[firstIdx] = choisie
+                    Log.i(TAG, "▸ Prédiction: '$label' → '$choisie' (voix grise, en attente de la main)")
+                    imeView?.postInvalidate()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "▸ Prédiction: la voix ne répond pas — ${e.message}")
+            }
+        }.start()
+    }
+
     private val labelPaint = Paint().apply {
         color = Color.BLACK  // noir pur pour mode DU
         textSize = 50f       // ⛪ MARÉE 05/10 — 20 % plus grand (comme le standalone)
@@ -129,6 +172,14 @@ class MiroirIME : InputMethodService() {
         textSize = 50f
         isAntiAlias = false
         typeface = Typeface.DEFAULT
+    }
+    // 🔮 LA VOIX GRISE (18/10/2026) — les lettres prédites par le proposeur :
+    // un gris moyen entre l'encre (noir) et l'estompé (gris clair).
+    private val paintPrediction = Paint().apply {
+        color = Color.rgb(110, 110, 110)
+        textSize = 50f
+        isAntiAlias = false
+        typeface = Typeface.DEFAULT_BOLD
     }
     // ── Dessin ────────────────────────────────────────────────────────
     private var imeView: CaptureSurfaceView? = null
@@ -2031,40 +2082,29 @@ class MiroirIME : InputMethodService() {
             startActivity(intent)
         })
 
-        // ═══ Bascule capture / mise en forme ═══
-        val formattingToggleBtn = makeButton("📝") {
-            isFormattingToggleInProgress = true
-            toggleFormattingMode()
-            uiHandler.postDelayed({ isFormattingToggleInProgress = false }, 300)
-        }
-        toolbar.addView(formattingToggleBtn)
+        // ⛪ LA MORT DE L'ANCIENNE CAPTURE (18/10/2026) — le 📝 est retiré :
+        // la vue interne historique n'a plus de porte. La coquille naît
+        // clavier, la main passe par ✍ (le standalone) — la vue interne vit
+        // encore dans le code jusqu'à sa fin, sans accès.
+        // (Le toggleFormattingMode demeure : il sert encore le cycle interne
+        // des modes ; il mourra avec la coquille.)
 
-        // ═══ Validation : clic court = page courante, appui long = tout le bloc ═══
-        toolbar.addView(makeButton("✓", {
-            // Appui long → push + commit TOUT le bloc (ne ferme pas l'IME)
-            savePage()
-            pushTextToParnasse()
-            val ic = currentInputConnection
-            if (ic != null) {
-                val fullText = buildAllPagesText()
-                ic.commitText(fullText.ifEmpty { "\n" }, 1)
-            }
+        // ═══ LA PORTE ↓ (18/10/2026) — une porte, trois commit ═══
+        // Clic simple = REMPLACER : la page valide, le texte remplace le champ ;
+        // clic long = le menu flottant : insérer (à la position du curseur,
+        // sélectionné) · committer (en composition) · remplacer (tout le champ).
+        var porteRef: android.widget.Button? = null
+        val porte = makeButton("↓", {
+            // Appui long → le menu des trois commit
+            porteRef?.let { showCommitMenu(it) }
         }) {
-            // Clic court → push + commit page courante. Si en capture, basculer vers clavier.
+            // Clic simple → le remplacement (la page valide d'abord)
             savePage()
             pushTextToParnasse()
-            val ic = currentInputConnection
-            if (ic != null) {
-                val pageText = buildReadingOrderText()
-                ic.commitText(pageText.ifEmpty { "\n" }, 1)
-            }
-            // ═══ Ne basculer que si on est en mode capture (pas de clavier→capture) ═══
-            if (!isFormattingMode) {
-                isFormattingToggleInProgress = true
-                toggleFormattingMode()
-                uiHandler.postDelayed({ isFormattingToggleInProgress = false }, 300)
-            }
-        })
+            remplacerTexte()
+        }
+        porteRef = porte
+        toolbar.addView(porte)
 
         // ═══ Bouton annotation 📌 (visible uniquement en mode correction) ═══
         val annotateBtn = android.widget.Button(this).apply {
@@ -2356,6 +2396,11 @@ class MiroirIME : InputMethodService() {
         Log.i(TAG, "onStartInputView — app=$app field=${info?.fieldName ?: "?"} inputType=${info?.inputType ?: 0}")
         semaStart = System.currentTimeMillis()  // ═══ T0 ═══
         Log.i(SEMA, "T0|onStartInputView|0ms|app=$app")
+
+        // ␐ LA PORTE ↓ DU TIROIR (18/10/2026) — le standalone a couché une
+        // commande de commit avant de finir : l'IME l'exécute dans le champ
+        // hôte (il est le seul porteur de l'InputConnection), puis l'efface.
+        lirePorteCommit()
 
         // ═══ Lire le token de connexion depuis le Cœur (UUID Parnasse) ═══
         // Sur restarting, relire aussi — le bloc Parnasse a pu changer.
@@ -4385,6 +4430,9 @@ class MiroirIME : InputMethodService() {
                     // ⚖️ La sentinelle : l'inférence pose — mais elle ne touche jamais un corrigé.
                     if (relecture.poserLabelInfere(firstIdx, result)) {
                         Log.i(TAG, "LABEL set: firstIdx=$firstIdx -> '$result' (${groupLabels.size} labels total)")
+                        // 🔮 La prédiction suit la pose : le label frais part
+                        // vers le proposeur — la voix grise reviendra (ou se taira).
+                        demanderPrediction(firstIdx, result)
                     } else {
                         Log.i(TAG, "LABEL retenu: firstIdx=$firstIdx reste '${groupLabels[firstIdx]}' — corrigé non ratifié")
                     }
@@ -4442,6 +4490,120 @@ class MiroirIME : InputMethodService() {
         val ic = currentInputConnection ?: return
         ic.setComposingText("$text ", 1)
         Log.i(TAG, "Texte injecté (composing): \"$text\"")
+    }
+
+    // ── LA PORTE ↓ (18/10/2026) — les trois gestes d'envoi ──────────────────
+    // Une porte, trois commit : insérer (à la position du curseur, sélectionné),
+    // committer (en composition — le geste doux), remplacer (tout le champ —
+    // le geste fort, son contrat assumé). La page valide d'abord (le versement
+    // Parnasse), le champ hôte reçoit ensuite.
+
+    /** Insérer — le texte entre à la position du curseur et reste SÉLECTIONNÉ :
+     *  le champ hôte le voit arriver marqué — le commit du texte sélectionné. */
+    private fun insererTexte() {
+        val ic = currentInputConnection ?: return
+        val text = buildReadingOrderText().trim()
+        if (text.isEmpty()) { Log.w(TAG, "↓ Insérer: rien à envoyer"); return }
+        ic.finishComposingText()
+        ic.commitText(text, 1)
+        val before = ic.getTextBeforeCursor(50000, 0) ?: ""
+        val selStart = before.length - text.length
+        val selEnd = before.length
+        if (selStart >= 0) ic.setSelection(selStart, selEnd)
+        Log.i(TAG, "↓ Inséré (${text.length}c) — sélection [$selStart, $selEnd]")
+    }
+
+    /** Committer — le geste doux : le texte se pose EN COMPOSITION dans le
+     *  champ ; le champ hôte décide de l'accepter (setComposingText). */
+    private fun committerTexte() {
+        val ic = currentInputConnection ?: return
+        val text = buildReadingOrderText().trim()
+        if (text.isEmpty()) { Log.w(TAG, "↓ Committer: rien à envoyer"); return }
+        ic.setComposingText("$text ", 1)
+        Log.i(TAG, "↓ Committé en composition (${text.length}c)")
+    }
+
+    /** Remplacer — le geste fort : toute la matière du champ est effacée et
+     *  remplacée par le texte de la page (le contrat assumé du remplacement). */
+    private fun remplacerTexte() {
+        val ic = currentInputConnection ?: return
+        val text = buildReadingOrderText().trim()
+        if (text.isEmpty()) { Log.w(TAG, "↓ Remplacer: rien à envoyer"); return }
+        ic.finishComposingText()
+        val before = ic.getTextBeforeCursor(50000, 0) ?: ""
+        val after = ic.getTextAfterCursor(50000, 0) ?: ""
+        ic.deleteSurroundingText(before.length, after.length)
+        ic.commitText(text, 1)
+        Log.i(TAG, "↓ Remplacé (${text.length}c)")
+    }
+
+    /** La porte ↓ — le menu flottant des trois commit. */
+    private fun showCommitMenu(anchor: android.view.View) {
+        val popup = android.widget.PopupMenu(this, anchor)
+        popup.menu.add("Insérer — à la position du curseur")
+        popup.menu.add("Committer — en composition")
+        popup.menu.add("Remplacer — tout le champ")
+        popup.setOnMenuItemClickListener { item ->
+            savePage()
+            pushTextToParnasse()
+            when (item.title.toString().substringBefore(" ")) {
+                "Insérer" -> insererTexte()
+                "Committer" -> committerTexte()
+                "Remplacer" -> remplacerTexte()
+            }
+            true
+        }
+        popup.show()
+    }
+
+    // ── ␐ LA PORTE DU TIROIR (18/10/2026) — la commande couchée par le
+    // standalone (il n'a pas d'InputConnection) est exécutée ici, au retour
+    // dans le champ hôte. Un fichier commun, une seule source : le geste ↓
+    // du tiroir se termine dans la main de l'IME.
+
+    /** ␐ Lit la commande de la porte (filesDir/porte-commit.json), l'exécute,
+     *  l'efface. Appelé en tête d'onStartInputView — le retour du tiroir. */
+    private fun lirePorteCommit() {
+        try {
+            val f = java.io.File(filesDir, "porte-commit.json")
+            if (!f.exists()) return
+            val j = org.json.JSONObject(f.readText())
+            val mode = j.optString("mode")
+            val texte = j.optString("texte")
+            f.delete()
+            if (texte.isBlank()) return
+            executerPorte(mode, texte)
+            Log.i(TAG, "␐ Porte exécutée au retour: $mode (${texte.length}c)")
+        } catch (e: Exception) {
+            Log.w(TAG, "␐ Porte: ${e.message}")
+        }
+    }
+
+    /** ␐ Les trois gestes de la porte, sur le texte couché par le tiroir. */
+    private fun executerPorte(mode: String, texte: String) {
+        val ic = currentInputConnection ?: return
+        when (mode.substringBefore(" ")) {
+            "Insérer" -> {
+                ic.finishComposingText()
+                ic.commitText(texte, 1)
+                val before = ic.getTextBeforeCursor(50000, 0) ?: ""
+                val selStart = before.length - texte.length
+                if (selStart >= 0) ic.setSelection(selStart, before.length)
+                Log.i(TAG, "␐ Inséré (${texte.length}c) — sélection posée")
+            }
+            "Committer" -> {
+                ic.setComposingText("$texte ", 1)
+                Log.i(TAG, "␐ Committé en composition (${texte.length}c)")
+            }
+            "Remplacer" -> {
+                ic.finishComposingText()
+                val before = ic.getTextBeforeCursor(50000, 0) ?: ""
+                val after = ic.getTextAfterCursor(50000, 0) ?: ""
+                ic.deleteSurroundingText(before.length, after.length)
+                ic.commitText(texte, 1)
+                Log.i(TAG, "␐ Remplacé (${texte.length}c)")
+            }
+        }
     }
 
     // ── Note synchronisée ─────────────────────────────────────────────
@@ -5494,10 +5656,55 @@ class MiroirIME : InputMethodService() {
             val y = snapToLine(anchor.second) + labelPaint.textSize - 10f  // ⛪ 05/10 — quelques px plus bas
             // ═══ Noir gras pour le SELECTED, gris normal pour les autres ═══
             val paint = if (firstIdx == selectedFirstIdx) labelPaint else dimLabelPaint
-            canvas.drawText(label, x, y, paint)
+            val prediction = predictions[firstIdx]
+            if (prediction != null && prediction != label) {
+                // 🔮 LA VOIX GRISE (18/10/2026) — le label affiche la proposition :
+                // les lettres communes (l'encre écrite) en noir, les prédites
+                // en gris moyen. La main voit d'un coup d'œil ce qu'elle ratifie.
+                dessinerPrediction(canvas, prediction, x, y, label, paint)
+            } else {
+                canvas.drawText(label, x, y, paint)
+            }
             drawn++
         }
         if (drawn < groupLabels.size) Log.d(TAG, "LABEL drawn: $drawn/${groupLabels.size}")
+    }
+
+    /** 🔮 Les lettres écrites gardent l'encre du label, les prédites passent
+     *  au gris moyen — LCS entre le nominal et la proposition (mots courts). */
+    private fun dessinerPrediction(canvas: Canvas, texte: String, x: Float, y: Float, nominal: String, basePaint: Paint) {
+        val n = nominal.length
+        val m = texte.length
+        if (n == 0 || m == 0) {
+            canvas.drawText(texte, x, y, basePaint)
+            return
+        }
+        val dp = Array(n + 1) { IntArray(m + 1) }
+        for (i in n - 1 downTo 0) {
+            for (j in m - 1 downTo 0) {
+                dp[i][j] = if (nominal[i] == texte[j]) dp[i + 1][j + 1] + 1 else maxOf(dp[i + 1][j], dp[i][j + 1])
+            }
+        }
+        val communes = BooleanArray(m)
+        var i = 0; var j = 0
+        while (i < n && j < m) {
+            when {
+                nominal[i] == texte[j] -> { communes[j] = true; i++; j++ }
+                dp[i + 1][j] >= dp[i][j + 1] -> i++
+                else -> j++
+            }
+        }
+        var cx = x
+        var k = 0
+        while (k < m) {
+            val predite = !communes[k]
+            var fin = k + 1
+            while (fin < m && communes[fin] == communes[k]) fin++
+            val seg = texte.substring(k, fin)
+            canvas.drawText(seg, cx, y, if (predite) paintPrediction else basePaint)
+            cx += basePaint.measureText(seg)
+            k = fin
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
