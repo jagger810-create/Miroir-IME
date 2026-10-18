@@ -869,8 +869,14 @@ class CaptureSurfaceView(context: Context, val engine: MiroirEngine) : View(cont
         if (correctionGroupFirstIdx >= 0) {
             if (appliquer && correctionLabel.isNotEmpty()) {
                 // Tenir — le corrigé devient nominal : la dette de révision s'éteint.
+                // La paire jugée (nominal → corrigé) REMONTE au Cœur : c'est la
+                // ratification qui nourrit la table des couples de lettres.
+                val nominalAvant = engine.relecture.nominaux[correctionGroupFirstIdx]
                 engine.relecture.corriger(correctionGroupFirstIdx, correctionLabel)
                 engine.relecture.tenir(correctionGroupFirstIdx)
+                if (nominalAvant != null && nominalAvant.isNotBlank() && nominalAvant != correctionLabel) {
+                    engine.remonterRatifications(listOf(nominalAvant to correctionLabel))
+                }
                 Log.i(TAG, "Label corrige: '$correctionLabel'")
             } else if (!appliquer) {
                 // ✗ — le nominal reprend sa place, la dette s'éteint sans graver.

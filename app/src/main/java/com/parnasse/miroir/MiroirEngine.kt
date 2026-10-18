@@ -303,11 +303,18 @@ class MiroirEngine {
     }
 
     /** Le clic long sur la coche — la ratification : la dette s'éteint, la
-     *  page est couchée. Les paires attendent leur récolte au geste. */
+     *  page est couchée, et les paires jugées (nominal → courant) REMONTENT
+     *  au Cœur — le glossaire personnel s'en nourrit (la prédiction les lira). */
     fun ratifierCoche() {
         var n = 0
+        val paires = mutableListOf<Pair<String, String>>()
         for (idx in relecture.labels.keys.toList()) {
             if (relecture.estCorrige(idx)) {
+                val nominal = relecture.nominaux[idx] ?: ""
+                val courant = relecture.labels[idx] ?: ""
+                if (nominal.isNotBlank() && courant.isNotBlank() && nominal != courant) {
+                    paires.add(nominal to courant)
+                }
                 relecture.tenir(idx)
                 n++
             }
@@ -315,9 +322,44 @@ class MiroirEngine {
         if (n > 0) {
             pageDirty = true
             Log.i(TAG, "▸ Correcteur: $n labels tenus — la dette s'éteint")
+            remonterRatifications(paires)
         }
         savePageFull()
         pageDirty = false  // ⚓ la mémoire parle comme le disque
+    }
+
+    /** La ratification remonte au Cœur (POST /api/glossaire/ratifier) — la
+     *  paire jugée {lu: nominal, ecrit: courant} entre dans le glossaire
+     *  personnel. LECTURE SEULE pour tout le reste : le geste ne touche ni
+     *  page, ni note, ni V★. Le même canal que le versement ⤒. */
+    fun remonterRatifications(paires: List<Pair<String, String>>) {
+        if (paires.isEmpty()) return
+        val json = org.json.JSONObject().apply {
+            val arr = org.json.JSONArray()
+            for ((lu, ecrit) in paires) {
+                arr.put(org.json.JSONObject().apply {
+                    put("lu", lu)
+                    put("ecrit", ecrit)
+                    put("famille", "label")
+                    put("source", "miroir")
+                })
+            }
+            put("paires", arr)
+        }
+        Thread {
+            try {
+                val conn = java.net.URL("$coeurUrl/api/glossaire/ratifier").openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.write(json.toString().toByteArray())
+                val code = conn.responseCode
+                conn.disconnect()
+                Log.i(TAG, "▸ Glossaire: ${paires.size} paire(s) remontée(s) (HTTP $code)")
+            } catch (e: Exception) {
+                Log.w(TAG, "▸ Glossaire: la ratification ne remonte pas — ${e.message}")
+            }
+        }.start()
     }
     val groupAnchor = mutableMapOf<Int, Pair<Float, Float>>()
     val groupBlobs = mutableMapOf<String, BlobData>()
