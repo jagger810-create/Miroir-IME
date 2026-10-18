@@ -204,6 +204,8 @@ Flutter Parnasse
 
 **Graine tracée** (à planter) : l'oracle à la bascule — champ **peuplé** → rouvrir la maison du champ, page semée du texte existant (édition, commit par-dessus au ✓) ; champ **vide** → token d'intention neuf. Clé = `app + inputType + hintText` — le texte jamais dans la clé.
 
+**La ratification remonte (18/10/2026)** : le clic long sur la coche ✓ et le verdict ● du mode correction tiennent le label ET remontent la paire jugée {nominal → courant} au Cœur (`POST /api/glossaire/ratifier`) — la table des couples de lettres (`glossaire-personnel.json`) s'enrichit du geste même. Côté Cœur, la PRÉDICTION (la cerise, `POST /api/prediction/proposer`, famille « glossaire ») lit la paire dès le geste suivant : côté IME la source est le texte — zéro phonétique, texte contre texte. Éprouvé sur tablette : la main tient « un » (lu « an »), la paire se couche, le champ suivant se la voit proposer.
+
 ---
 
 ## 🖥️ EPD & Fontaine (Boox)
